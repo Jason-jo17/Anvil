@@ -102,7 +102,8 @@ impl McpSession {
 
 fn map_service_error(error: ServiceError) -> CoreError {
     match error {
-        ServiceError::TransportClosed => CoreError::Disconnected,
+        // A failed write (e.g. a broken pipe to a killed stdio server) means the server is gone, same as a closed transport.
+        ServiceError::TransportClosed | ServiceError::TransportSend(_) => CoreError::Disconnected,
         other => CoreError::Protocol(other.to_string()),
     }
 }
@@ -182,6 +183,17 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
         let error = session.list_tools().await.unwrap_err();
         assert!(matches!(error, CoreError::Disconnected), "{error:?}");
+    }
+
+    #[test]
+    fn a_write_to_a_dead_server_counts_as_disconnected() {
+        // macOS reports a killed stdio server as a broken pipe on the next write, before EOF is observed.
+        let broken_pipe = ServiceError::TransportSend(rmcp::transport::DynamicTransportError::from_parts(
+            "TokioChildProcess",
+            std::any::TypeId::of::<()>(),
+            Box::new(std::io::Error::from(std::io::ErrorKind::BrokenPipe)),
+        ));
+        assert!(matches!(map_service_error(broken_pipe), CoreError::Disconnected));
     }
 
     #[tokio::test]
