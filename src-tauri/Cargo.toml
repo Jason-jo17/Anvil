@@ -22,6 +22,7 @@ uuid = { version = "1.26", features = ["v4"] }
 
 [dev-dependencies]
 anvil-core = { path = "../crates/anvil-core", features = ["test-fixture"] }
+tauri = { version = "2.11.6", features = ["test"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 
 [lints]
