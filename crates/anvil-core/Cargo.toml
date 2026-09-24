@@ -1,0 +1,15 @@
+[package]
+name = "anvil-core"
+version = "0.1.0"
+description = "Protocol, transport and domain logic for MCP Anvil"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
