@@ -6,10 +6,22 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[features]
+# Exposes `anvil_core::fixture`, an in-process MCP server, to other crates' tests.
+test-fixture = ["dep:schemars", "rmcp/server", "rmcp/macros"]
+
 [dependencies]
+rmcp = { workspace = true, features = ["client", "transport-child-process", "transport-async-rw"] }
+schemars = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+tokio = { workspace = true, features = ["process", "io-util", "time", "sync", "rt", "macros"] }
+
+[dev-dependencies]
+rmcp = { workspace = true, features = ["server", "macros"] }
+schemars.workspace = true
+tokio = { workspace = true, features = ["full"] }
 
 [lints]
 workspace = true
