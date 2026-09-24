@@ -40,6 +40,10 @@ describe("resolveRef", () => {
     expect(resolveRef(root, { $ref: "https://example.com/s.json" }).unresolved).toBe("https://example.com/s.json");
   });
 
+  it("treats a malformed percent-escape in a ref as unresolved instead of throwing", () => {
+    expect(resolveRef(root, { $ref: "#/$defs/100%off" }).unresolved).toBe("#/$defs/100%off");
+  });
+
   it("passes schemas without $ref through unchanged", () => {
     const s = { type: "string" };
     expect(resolveRef(root, s)).toMatchObject({ schema: s, cyclic: false });

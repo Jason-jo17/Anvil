@@ -69,12 +69,30 @@ impl Registry {
 
     pub async fn list_tools(&self, id: &str) -> Result<Vec<ToolSummary>, IpcError> {
         let connection = self.get(id)?;
-        Ok(connection.session.list_tools().await?)
+        let result = connection.session.list_tools().await;
+        self.settle(id, &connection, result).await
     }
 
     pub async fn call_tool(&self, id: &str, name: &str, arguments: Map<String, Value>) -> Result<Value, IpcError> {
         let connection = self.get(id)?;
-        Ok(connection.session.call_tool(name, arguments).await?)
+        let result = connection.session.call_tool(name, arguments).await;
+        self.settle(id, &connection, result).await
+    }
+
+    /// A server that went away is dropped from the registry, and its last stderr lines explain why.
+    async fn settle<T>(&self, id: &str, connection: &Connection, result: Result<T, CoreError>) -> Result<T, IpcError> {
+        match result {
+            Err(CoreError::Disconnected) => {
+                self.lock().remove(id);
+                connection.session.close().await;
+                let mut error = IpcError::from(CoreError::Disconnected);
+                if let Some(process) = &connection.process {
+                    error.stderr_tail = process.stderr.lines();
+                }
+                Err(error)
+            }
+            other => other.map_err(IpcError::from),
+        }
     }
 
     pub async fn disconnect(&self, id: &str) -> Result<(), IpcError> {
@@ -150,6 +168,25 @@ mod tests {
         assert_eq!(registry.open_count(), 0);
         assert!(matches!(conn_a.session.list_tools().await, Err(CoreError::Disconnected)));
         assert!(matches!(conn_b.session.list_tools().await, Err(CoreError::Disconnected)));
+    }
+
+    #[tokio::test]
+    async fn a_server_that_died_reports_its_stderr_and_is_removed() {
+        let (io, server) = spawn_fixture();
+        let session = McpSession::connect_with(io, SessionOptions::default()).await.expect("connect");
+        let stderr = anvil_core::stdio::StderrTail::default();
+        stderr.push("fatal: lost database connection".into());
+        let registry = Registry::default();
+        let id = registry.insert(Connection { session, process: Some(ProcessInfo { pid: None, stderr }) });
+
+        server.abort();
+        let _ = server.await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let error = registry.list_tools(&id).await.unwrap_err();
+        assert_eq!(error.kind, "disconnected");
+        assert_eq!(error.stderr_tail, ["fatal: lost database connection"]);
+        assert_eq!(registry.open_count(), 0, "a dead connection must not stay registered");
     }
 
     #[test]

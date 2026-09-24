@@ -8,6 +8,11 @@ use std::{
     time::Duration,
 };
 
+#[cfg(unix)]
+use process_wrap::tokio::ProcessGroup;
+use process_wrap::tokio::{CommandWrap, KillOnDrop};
+#[cfg(windows)]
+use process_wrap::tokio::{CreationFlags, JobObject};
 use rmcp::transport::TokioChildProcess;
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -130,6 +135,23 @@ fn capture_stderr(stderr: ChildStderr, tail: StderrTail) {
     });
 }
 
+/// Launchers (`npx.cmd`, `sh -c`, `uvx`) start the real server as a grandchild. Killing only the direct child would
+/// leave it running with no window, so the whole tree goes in a Windows Job Object or a Unix process group, and is
+/// killed when the session closes or when Anvil itself exits or crashes.
+fn whole_tree(command: Command) -> CommandWrap {
+    let mut wrapped = CommandWrap::from(command);
+    wrapped.wrap(KillOnDrop);
+    #[cfg(windows)]
+    {
+        // CREATE_NO_WINDOW: no console window flashes up. Set through the wrapper so JobObject keeps it.
+        wrapped.wrap(CreationFlags(windows::Win32::System::Threading::CREATE_NO_WINDOW));
+        wrapped.wrap(JobObject);
+    }
+    #[cfg(unix)]
+    wrapped.wrap(ProcessGroup::leader());
+    wrapped
+}
+
 #[derive(Debug, Clone)]
 pub struct ProcessInfo {
     pub pid: Option<u32>,
@@ -160,10 +182,8 @@ pub async fn connect_stdio(
 
     let mut command = Command::new(program);
     command.args(&spec.args).env_clear().envs(&env).current_dir(&cwd);
-    #[cfg(windows)]
-    command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW: no console window flashes up.
 
-    let (transport, stderr) = TokioChildProcess::builder(command).stderr(Stdio::piped()).spawn()?;
+    let (transport, stderr) = TokioChildProcess::builder(whole_tree(command)).stderr(Stdio::piped()).spawn()?;
     let pid = transport.id();
     let tail = StderrTail::default();
     if let Some(stderr) = stderr {

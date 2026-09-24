@@ -21,7 +21,13 @@ export function lookupPointer(root: SchemaObject, ref: string): Schema | undefin
   let node: unknown = root;
   for (const token of pointer.slice(1).split("/")) {
     if (node === null || typeof node !== "object") return undefined;
-    node = (node as Record<string, unknown>)[decodePointerToken(token)];
+    let key: string;
+    try {
+      key = decodePointerToken(token);
+    } catch {
+      return undefined; // Malformed %-escape from the server: treat the ref as unresolvable, never crash.
+    }
+    node = (node as Record<string, unknown>)[key];
   }
   if (typeof node === "boolean") return node;
   return node !== null && typeof node === "object" ? (node as SchemaObject) : undefined;

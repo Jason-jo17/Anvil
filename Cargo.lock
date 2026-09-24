@@ -58,6 +58,7 @@ dependencies = [
 name = "anvil-core"
 version = "0.1.0"
 dependencies = [
+ "process-wrap",
  "rmcp",
  "schemars 1.2.2",
  "serde",
@@ -66,6 +67,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "which",
+ "windows 0.62.2",
 ]
 
 [[package]]

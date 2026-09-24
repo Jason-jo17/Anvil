@@ -74,6 +74,67 @@ async fn disconnect_terminates_the_child_process() {
     assert!(wait_until_gone(pid, Duration::from_secs(5)).await, "server {pid} still running after close");
 }
 
+/// Every live process whose ancestry includes `root` (the launcher and whatever it started).
+fn descendants(root: u32) -> Vec<u32> {
+    let mut system = System::new();
+    system.refresh_processes(ProcessesToUpdate::All, true);
+    let mut found = vec![Pid::from_u32(root)];
+    let mut grew = true;
+    while grew {
+        grew = false;
+        for (pid, process) in system.processes() {
+            if !found.contains(pid) && process.parent().is_some_and(|parent| found.contains(&parent)) {
+                found.push(*pid);
+                grew = true;
+            }
+        }
+    }
+    found.into_iter().skip(1).map(|pid| pid.as_u32()).collect()
+}
+
+/// A launcher script (like `npx.cmd`) around a server that keeps running after stdin closes.
+fn launcher_around_a_stubborn_server() -> StdioSpec {
+    let everything = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../node_modules/@modelcontextprotocol/server-everything/dist/index.js")
+        .canonicalize()
+        .expect("run `pnpm install` at the repo root");
+    // canonicalize() adds the \\?\ verbatim prefix on Windows, which file URLs can't carry.
+    let path = everything.to_string_lossy().trim_start_matches(r"\\?\").replace('\\', "/");
+    let url = format!("file:///{}", path.trim_start_matches('/'));
+    let dir = std::env::temp_dir().join(format!("anvil-launcher-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("stubborn.mjs"), format!("setInterval(() => {{}}, 1 << 30);\nawait import({url:?});\n"))
+        .unwrap();
+    #[cfg(windows)]
+    let launcher = {
+        let path = dir.join("server.cmd");
+        std::fs::write(&path, "@echo off\r\nnode \"%~dp0stubborn.mjs\" stdio\r\n").unwrap();
+        path
+    };
+    #[cfg(not(windows))]
+    let launcher = {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join("server.sh");
+        std::fs::write(&path, "#!/bin/sh\nnode \"$(dirname \"$0\")/stubborn.mjs\" stdio\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    };
+    StdioSpec { command: launcher.to_string_lossy().into_owned(), args: vec![], env: Default::default(), cwd: None }
+}
+
+#[tokio::test]
+async fn disconnect_stops_servers_started_by_a_launcher_script() {
+    let conn = connect(&launcher_around_a_stubborn_server()).await.expect("connect");
+    conn.session.list_tools().await.expect("tools/list");
+    let tree = descendants(conn.process.pid.expect("pid"));
+    assert!(!tree.is_empty(), "expected the launcher to have started a server process");
+
+    conn.session.close().await;
+    for pid in tree {
+        assert!(wait_until_gone(pid, Duration::from_secs(8)).await, "server process {pid} outlived disconnect");
+    }
+}
+
 #[tokio::test]
 async fn a_crash_mid_session_reports_disconnected() {
     let conn = connect(&everything()).await.expect("connect");

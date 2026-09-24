@@ -13,9 +13,10 @@ multi-day, per-OS effort.
 2. Environment: children get an allowlist of the parent environment (mirroring the MCP SDKs' default environment:
    PATH, HOME/USERPROFILE, TEMP, SYSTEMROOT, and so on) plus variables the user set explicitly. API keys and cloud
    credentials in the parent environment are not inherited.
-3. Lifetime: sessions close on disconnect and on app exit; rmcp's child-process transport kills on drop.
+3. Lifetime: sessions close on disconnect and on app exit. The whole process tree is spawned inside a Windows Job
+   Object (kill-on-close) or a Unix process group via `process-wrap`, so servers started by launchers (`npx.cmd`,
+   `sh -c`, `uvx`) die with the session, and also if Anvil crashes (Windows).
 4. Resource caps: server stderr is captured into a bounded ring buffer (200 lines × 2 KiB, 64 KiB per read).
 
 ## Deferred
-OS-level sandboxing, and process-tree termination for launchers that spawn grandchildren (Windows Job Objects), is
-tracked for the Day 14 hardening pass.
+OS-level sandboxing (AppContainer, sandbox-exec, landlock) is tracked for the Day 14 hardening pass.

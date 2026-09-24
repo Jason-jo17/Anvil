@@ -98,6 +98,17 @@ describe("SchemaForm", () => {
     expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ count: 3 }));
   });
 
+  it("omits an optional object again once its fields are cleared", async () => {
+    const { onSubmit, user } = setup({
+      type: "object",
+      properties: { filters: { type: "object", properties: { city: { type: "string" } } } },
+    });
+    await user.type(screen.getByLabelText(/^city/), "Oslo");
+    await user.clear(screen.getByLabelText(/^city/));
+    await user.click(screen.getByRole("button", { name: "Run" }));
+    expect(onSubmit.mock.calls[0]![0]).toStrictEqual({});
+  });
+
   it("adds and removes array items", async () => {
     const { onSubmit, user } = setup({ type: "object", properties: { tags: { type: "array", items: { type: "string" } } } });
     await user.click(screen.getByRole("button", { name: "Add tags item" }));

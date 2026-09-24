@@ -39,7 +39,8 @@ export function ObjectField(props: FieldProps) {
         const updated = { ...obj };
         if (next === undefined) delete updated[key];
         else updated[key] = next;
-        onChange(updated);
+        // An optional object with nothing left in it goes back to "not sent", rather than being sent as {}.
+        onChange(!required && Object.keys(updated).length === 0 ? undefined : updated);
       }}
     />
   ));
