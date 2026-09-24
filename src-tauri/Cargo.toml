@@ -1,0 +1,29 @@
+[package]
+name = "anvil-app"
+version = "0.1.0"
+description = "MCP Anvil desktop app"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "anvil_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6", features = [] }
+
+[dependencies]
+anvil-core = { path = "../crates/anvil-core" }
+serde.workspace = true
+serde_json.workspace = true
+tauri = { version = "2.11.6", features = [] }
+uuid = { version = "1.26", features = ["v4"] }
+
+[dev-dependencies]
+anvil-core = { path = "../crates/anvil-core", features = ["test-fixture"] }
+tauri = { version = "2.11.6", features = ["test"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+
+[lints]
+workspace = true

@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Main window gets core only. No shell or fs plugins: processes are spawned in Rust, after consent.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}
