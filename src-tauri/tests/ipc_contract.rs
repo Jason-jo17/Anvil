@@ -11,6 +11,9 @@ use tauri::{
     webview::InvokeRequest,
 };
 
+/// The app's own origin. Tauri's ACL refuses app commands from any other origin, and it differs by platform.
+const APP_ORIGIN: &str = if cfg!(windows) { "http://tauri.localhost" } else { "tauri://localhost" };
+
 fn app() -> (tauri::App<MockRuntime>, tauri::WebviewWindow<MockRuntime>) {
     let app = configure(mock_builder()).build(mock_context(noop_assets())).expect("mock app");
     let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default()).build().expect("webview");
@@ -24,7 +27,7 @@ fn invoke(webview: &tauri::WebviewWindow<MockRuntime>, cmd: &str, args: Value) -
             cmd: cmd.into(),
             callback: CallbackFn(0),
             error: CallbackFn(1),
-            url: "http://tauri.localhost".parse().unwrap(),
+            url: APP_ORIGIN.parse().unwrap(),
             body: InvokeBody::Json(args),
             headers: Default::default(),
             invoke_key: INVOKE_KEY.to_string(),
