@@ -26,7 +26,7 @@ pub async fn connect_stdio(
         return Err(IpcError::consent_required());
     }
     let consent = SpawnConsent::granted_for(&spec);
-    let connection = stdio::connect_stdio(&spec, &consent, SessionOptions::default()).await?;
+    let connection = stdio::connect_stdio(&spec, &consent, SessionOptions::for_stdio()).await?;
     let server = connection.session.server().clone();
     Ok(ConnectResult { connection_id: registry.insert(connection.into()), server })
 }
