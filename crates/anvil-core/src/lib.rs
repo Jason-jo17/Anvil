@@ -5,6 +5,7 @@ pub mod error;
 pub mod fixture;
 pub mod model;
 pub mod session;
+pub mod stdio;
 
 pub use error::CoreError;
 pub use model::{ServerSummary, ToolSummary};
