@@ -52,6 +52,11 @@ export function ConsentDialog() {
         <div id="consent-body" className="modal-body">
           <p>MCP Anvil will start this program on your computer with your user permissions. Only run servers you trust.</p>
           <pre className="code-block">{formatCommandLine(spec)}</pre>
+          {Object.keys(spec.env).length > 0 && (
+            <p>
+              With environment variables (values hidden): <code>{Object.keys(spec.env).join(", ")}</code>
+            </p>
+          )}
         </div>
         <div className="modal-actions">
           <button ref={cancelRef} type="button" className="sf-button" onClick={cancel}>

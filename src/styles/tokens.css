@@ -13,6 +13,7 @@
   --color-danger-surface: #fdecea;
   --color-success: #1e7a3c;
   --color-focus: #1f5fd6;
+  --color-scrim: rgb(0 0 0 / 0.45);
 
   --space-1: 4px;
   --space-2: 8px;
@@ -53,6 +54,7 @@
     --color-danger-surface: #3a1614;
     --color-success: #6fd08c;
     --color-focus: #7aa7ff;
+    --color-scrim: rgb(0 0 0 / 0.6);
   }
 }
 
@@ -70,6 +72,7 @@
   --color-danger-surface: #3a1614;
   --color-success: #6fd08c;
   --color-focus: #7aa7ff;
+  --color-scrim: rgb(0 0 0 / 0.6);
 }
 
 @media (prefers-reduced-motion: reduce) {

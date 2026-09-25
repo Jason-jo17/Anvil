@@ -116,6 +116,47 @@ describe("App", () => {
     expect(screen.getByRole("dialog")).toHaveTextContent('node "C:\\my servers\\s.js" --verbose');
   });
 
+  it("passes environment variables, showing only their names in the consent dialog", async () => {
+    mockBackend();
+    const user = userEvent.setup();
+    render(<App />);
+    await user.type(screen.getByLabelText("Command (stdio)"), "npx -y @acme/mcp-server");
+    await user.click(screen.getByLabelText(/^Environment variables/));
+    await user.paste("ACME_TOKEN=sk-secret-123\nACME_REGION=eu");
+    await user.click(screen.getByRole("button", { name: "Connect" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Run this command?" });
+    expect(dialog).toHaveTextContent("ACME_TOKEN");
+    expect(dialog).toHaveTextContent("ACME_REGION");
+    expect(dialog).not.toHaveTextContent("sk-secret-123");
+
+    await user.click(within(dialog).getByRole("button", { name: "Run command" }));
+    await screen.findByRole("navigation", { name: "Tools" });
+    expect(calls[0]).toEqual({
+      cmd: "connect_stdio",
+      args: expect.objectContaining({
+        spec: {
+          command: "npx",
+          args: ["-y", "@acme/mcp-server"],
+          env: { ACME_TOKEN: "sk-secret-123", ACME_REGION: "eu" },
+          cwd: null,
+        },
+      }),
+    });
+  });
+
+  it("blocks connecting with a malformed environment line", async () => {
+    mockBackend();
+    const user = userEvent.setup();
+    render(<App />);
+    await user.type(screen.getByLabelText("Command (stdio)"), "node server.js");
+    await user.click(screen.getByLabelText(/^Environment variables/));
+    await user.paste("not a pair");
+    await user.click(screen.getByRole("button", { name: "Connect" }));
+    expect(screen.getByText("Line 1: expected NAME=value")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
   it("invokes a tool from its form and shows the result", async () => {
     mockBackend();
     const user = await connectToSample();
