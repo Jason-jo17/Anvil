@@ -174,6 +174,23 @@ async fn a_server_that_dies_at_startup_reports_its_stderr() {
 }
 
 #[tokio::test]
+async fn a_server_that_never_answers_reports_a_timeout_with_its_stderr() {
+    let spec = StdioSpec {
+        command: "node".into(),
+        args: vec!["-e".into(), "console.error('downloading packages...'); setInterval(() => {}, 1 << 30)".into()],
+        env: Default::default(),
+        cwd: None,
+    };
+    let options = SessionOptions { connect_timeout: Duration::from_secs(2), ..SessionOptions::default() };
+    let error = connect_stdio(&spec, &SpawnConsent::granted_for(&spec), options).await.unwrap_err();
+    let CoreError::StartupFailed { reason, stderr_tail } = &error else {
+        panic!("expected StartupFailed, got {error:?}")
+    };
+    assert!(reason.contains("timed out"), "{reason}");
+    assert!(stderr_tail.iter().any(|l| l.contains("downloading packages")), "{stderr_tail:?}");
+}
+
+#[tokio::test]
 async fn consent_must_match_the_spawned_command() {
     let consent = SpawnConsent::granted_for(&everything());
     let mut other = everything();

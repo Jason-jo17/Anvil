@@ -192,7 +192,7 @@ pub async fn connect_stdio(
 
     match McpSession::connect_with(transport, options).await {
         Ok(session) => Ok(StdioConnection { session, process: ProcessInfo { pid, stderr: tail } }),
-        Err(timeout @ CoreError::Timeout { .. }) => Err(timeout),
+        // Timeouts included: whatever the server printed (a slow download, a prompt it waits on) explains the hang.
         Err(other) => {
             // Let the stderr reader drain what the process printed before it died.
             tokio::time::sleep(Duration::from_millis(200)).await;

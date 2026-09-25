@@ -4,9 +4,19 @@ use anvil_core::{
 };
 use serde::Serialize;
 use serde_json::{Map, Value};
-use tauri::State;
+use tauri::{AppHandle, Emitter, Runtime, State};
 
 use crate::registry::{IpcError, Registry};
+
+/// Emitted when a server exits without the user disconnecting (crash, `exit()`, killed).
+pub const CONNECTION_CLOSED_EVENT: &str = "anvil://connection-closed";
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionClosed {
+    pub connection_id: String,
+    pub stderr_tail: Vec<String>,
+}
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -16,7 +26,8 @@ pub struct ConnectResult {
 }
 
 #[tauri::command]
-pub async fn connect_stdio(
+pub async fn connect_stdio<R: Runtime>(
+    app: AppHandle<R>,
     registry: State<'_, Registry>,
     spec: StdioSpec,
     consented: bool,
@@ -26,9 +37,12 @@ pub async fn connect_stdio(
         return Err(IpcError::consent_required());
     }
     let consent = SpawnConsent::granted_for(&spec);
-    let connection = stdio::connect_stdio(&spec, &consent, SessionOptions::default()).await?;
+    let connection = stdio::connect_stdio(&spec, &consent, SessionOptions::for_stdio()).await?;
     let server = connection.session.server().clone();
-    Ok(ConnectResult { connection_id: registry.insert(connection.into()), server })
+    let connection_id = registry.insert_watched(connection.into(), move |connection_id, stderr_tail| {
+        let _ = app.emit(CONNECTION_CLOSED_EVENT, ConnectionClosed { connection_id, stderr_tail });
+    });
+    Ok(ConnectResult { connection_id, server })
 }
 
 #[tauri::command]

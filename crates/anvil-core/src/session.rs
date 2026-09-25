@@ -2,12 +2,12 @@ use std::{fmt, future::Future, time::Duration};
 
 use rmcp::{
     RoleClient, ServiceError, ServiceExt,
-    model::CallToolRequestParams,
-    service::{Peer, RunningService},
+    model::{CallToolRequestParams, ClientCapabilities, ClientConfig, Implementation},
+    service::{Peer, RunningServiceCancellationToken},
     transport::IntoTransport,
 };
 use serde_json::{Map, Value, json};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, watch};
 
 use crate::{CoreError, ServerSummary, ToolSummary};
 
@@ -23,12 +23,29 @@ impl Default for SessionOptions {
     }
 }
 
+impl SessionOptions {
+    /// Launchers like `npx -y` download the server package on first run, so startup gets a longer budget.
+    pub fn for_stdio() -> Self {
+        Self { connect_timeout: Duration::from_secs(120), ..Self::default() }
+    }
+}
+
 /// One initialized MCP client session. Requests go through a cloned `Peer`, so a long call never blocks `close`.
+/// The running service lives in a watcher task, which flips `closed` when the connection ends for any reason.
 pub struct McpSession {
     peer: Peer<RoleClient>,
-    service: Mutex<Option<RunningService<RoleClient, ()>>>,
+    cancel: Mutex<Option<RunningServiceCancellationToken>>,
+    closed: watch::Receiver<bool>,
     server: ServerSummary,
     options: SessionOptions,
+}
+
+/// How Anvil introduces itself in `initialize`, so server logs name the client correctly.
+fn client_config() -> ClientConfig {
+    ClientConfig::new(
+        ClientCapabilities::default(),
+        Implementation::new("mcp-anvil", env!("CARGO_PKG_VERSION")).with_title("MCP Anvil"),
+    )
 }
 
 impl fmt::Debug for McpSession {
@@ -43,13 +60,26 @@ impl McpSession {
         T: IntoTransport<RoleClient, E, A>,
         E: std::error::Error + Send + Sync + 'static,
     {
-        let service = tokio::time::timeout(options.connect_timeout, ().serve(transport))
+        let service = tokio::time::timeout(options.connect_timeout, client_config().serve(transport))
             .await
             .map_err(|_| CoreError::Timeout { what: "initialize", after: options.connect_timeout })?
             .map_err(|e| CoreError::Protocol(e.to_string()))?;
         let info = serde_json::to_value(service.peer_info()).map_err(|e| CoreError::InvalidData(e.to_string()))?;
         let server = ServerSummary::from_initialize_result(info)?;
-        Ok(Self { peer: service.peer().clone(), service: Mutex::new(Some(service)), server, options })
+        let peer = service.peer().clone();
+        let cancel = service.cancellation_token();
+        let (closed_tx, closed) = watch::channel(false);
+        tokio::spawn(async move {
+            let _ = service.waiting().await;
+            let _ = closed_tx.send(true);
+        });
+        Ok(Self { peer, cancel: Mutex::new(Some(cancel)), closed, server, options })
+    }
+
+    /// Resolves once the connection has ended: the server exited or crashed, or `close` was called.
+    pub async fn closed(&self) {
+        let mut closed = self.closed.clone();
+        let _ = closed.wait_for(|is_closed| *is_closed).await;
     }
 
     pub fn server(&self) -> &ServerSummary {
@@ -78,10 +108,11 @@ impl McpSession {
 
     /// Ends the session and, for child-process transports, stops the server. Safe to call more than once.
     pub async fn close(&self) {
-        let service = self.service.lock().await.take();
-        if let Some(service) = service {
-            let _ = service.cancel().await;
+        let cancel = self.cancel.lock().await.take();
+        if let Some(cancel) = cancel {
+            cancel.cancel();
         }
+        self.closed().await;
     }
 
     async fn request<T>(
@@ -89,7 +120,7 @@ impl McpSession {
         what: &'static str,
         request: impl Future<Output = Result<T, ServiceError>>,
     ) -> Result<T, CoreError> {
-        if self.service.lock().await.is_none() {
+        if *self.closed.borrow() || self.cancel.lock().await.is_none() {
             return Err(CoreError::Disconnected);
         }
         match tokio::time::timeout(self.options.request_timeout, request).await {
@@ -183,6 +214,43 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
         let error = session.list_tools().await.unwrap_err();
         assert!(matches!(error, CoreError::Disconnected), "{error:?}");
+    }
+
+    #[test]
+    fn stdio_startup_allows_for_a_first_run_package_download() {
+        assert!(SessionOptions::for_stdio().connect_timeout >= Duration::from_secs(120));
+        assert_eq!(SessionOptions::for_stdio().request_timeout, SessionOptions::default().request_timeout);
+    }
+
+    #[tokio::test]
+    async fn identifies_itself_to_servers_as_mcp_anvil() {
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let server = tokio::spawn(async move { crate::fixture::FixtureServer.serve(server_io).await.expect("serve") });
+        let _session = McpSession::connect_with(client_io, SessionOptions::default()).await.unwrap();
+        let running = server.await.unwrap();
+        let client = serde_json::to_value(running.peer_info()).unwrap();
+        assert_eq!(client["clientInfo"]["name"], "mcp-anvil");
+        assert_eq!(client["clientInfo"]["title"], "MCP Anvil");
+        assert_eq!(client["clientInfo"]["version"], env!("CARGO_PKG_VERSION"));
+    }
+
+    #[tokio::test]
+    async fn closed_resolves_when_the_server_goes_away() {
+        let (session, server) = connect().await;
+        let watcher = tokio::spawn(async move {
+            session.closed().await;
+        });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(!watcher.is_finished(), "closed() resolved while the server was still up");
+        server.abort();
+        tokio::time::timeout(Duration::from_secs(2), watcher).await.expect("closed() never resolved").unwrap();
+    }
+
+    #[tokio::test]
+    async fn closed_resolves_after_close() {
+        let (session, _server) = connect().await;
+        session.close().await;
+        tokio::time::timeout(Duration::from_secs(2), session.closed()).await.expect("closed() never resolved");
     }
 
     #[test]
