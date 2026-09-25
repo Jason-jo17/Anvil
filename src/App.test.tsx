@@ -1,5 +1,6 @@
 import { mockIPC } from "@tauri-apps/api/mocks";
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
+import { emit } from "@tauri-apps/api/event";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 import App from "./App";
@@ -10,7 +11,7 @@ const server = {
   title: "Everything",
   version: "2026.8.31",
   protocolVersion: "2025-11-25",
-  capabilities: {},
+  capabilities: { tools: {} },
 };
 const tools = [
   {
@@ -29,7 +30,8 @@ type Handler = (args: Record<string, unknown>) => unknown;
 let calls: Array<{ cmd: string; args: Record<string, unknown> }>;
 
 function mockBackend(overrides: Record<string, Handler> = {}) {
-  mockIPC((cmd, args) => {
+  mockIPC(
+    (cmd, args) => {
     const a = (args ?? {}) as Record<string, unknown>;
     calls.push({ cmd, args: a });
     if (overrides[cmd]) return overrides[cmd](a);
@@ -43,7 +45,9 @@ function mockBackend(overrides: Record<string, Handler> = {}) {
       default:
         return null;
     }
-  });
+    },
+    { shouldMockEvents: true },
+  );
 }
 
 async function connectToSample() {
@@ -95,6 +99,12 @@ describe("App", () => {
     });
     expect(screen.getByRole("button", { name: /^echo/ })).toBeInTheDocument();
     expect(screen.getByText(/Connected to Everything 2026\.8\.31 · 2 tools · listed in \d+ ms/)).toBeInTheDocument();
+  });
+
+  it("says so when a server offers no tools", async () => {
+    mockBackend({ connect_stdio: () => ({ connectionId: "c1", server: { ...server, capabilities: { prompts: {} } } }) });
+    await connectToSample();
+    expect(screen.getByText(/doesn't offer any tools/)).toBeInTheDocument();
   });
 
   it("parses a typed command line into the spec", async () => {
@@ -157,6 +167,19 @@ describe("App", () => {
     await user.type(screen.getByLabelText(/^message/), "hi");
     await user.click(screen.getByRole("button", { name: "Run tool" }));
     expect(await screen.findByText(/The server disconnected/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Try server-everything" })).toBeInTheDocument();
+  });
+
+  it("shows a server that exits on its own right away, with its stderr", async () => {
+    mockBackend();
+    await connectToSample();
+    await act(() => emit("anvil://connection-closed", { connectionId: "other", stderrTail: [] }));
+    expect(screen.getByRole("navigation", { name: "Tools" })).toBeInTheDocument();
+
+    await act(() => emit("anvil://connection-closed", { connectionId: "c1", stderrTail: ["panic: out of memory"] }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("The server disconnected");
+    expect(alert).toHaveTextContent("panic: out of memory");
     expect(screen.getByRole("button", { name: "Try server-everything" })).toBeInTheDocument();
   });
 

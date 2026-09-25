@@ -4,7 +4,7 @@ import { AnvilError } from "../lib/ipc";
 import { resetConnectionStore, useConnection } from "./connection";
 
 const spec = { command: "npx", args: ["-y", "@modelcontextprotocol/server-everything"], env: {}, cwd: null };
-const server = { name: "everything", version: "2026.8.31", protocolVersion: "2025-11-25", capabilities: {} };
+const server = { name: "everything", version: "2026.8.31", protocolVersion: "2025-11-25", capabilities: { tools: {} } };
 const tools = [{ name: "echo", inputSchema: { type: "object" } }];
 
 describe("connection store", () => {
@@ -50,6 +50,14 @@ describe("connection store", () => {
     expect(state.toolsLoadMs).toEqual(expect.any(Number));
   });
 
+  it("does not ask a server without the tools capability to list tools", async () => {
+    mockServer({ connect_stdio: () => ({ connectionId: "c1", server: { ...server, capabilities: { prompts: {} } } }) });
+    useConnection.getState().requestConnect(spec);
+    await useConnection.getState().confirmConnect();
+    expect(calls).toEqual(["connect_stdio"]);
+    expect(useConnection.getState()).toMatchObject({ status: "connected", connectionId: "c1", tools: [] });
+  });
+
   it("a startup failure lands in the error state with stderr", async () => {
     mockServer({
       connect_stdio: () => {
@@ -90,6 +98,32 @@ describe("connection store", () => {
     await useConnection.getState().confirmConnect();
     useConnection.getState().handleCallError(new AnvilError("disconnected", "not connected"));
     expect(useConnection.getState()).toMatchObject({ status: "error", connectionId: null });
+  });
+
+  it("a newer connect attempt wins and the superseded connection is closed", async () => {
+    const spec2 = { ...spec, args: ["-y", "other-server"] };
+    const disconnected: unknown[] = [];
+    const pending: Array<(value: unknown) => void> = [];
+    mockIPC((cmd, args) => {
+      calls.push(cmd);
+      if (cmd === "connect_stdio") return new Promise((resolve) => pending.push(resolve));
+      if (cmd === "list_tools") return tools;
+      if (cmd === "disconnect") disconnected.push((args as { connectionId: string }).connectionId);
+      return null;
+    });
+
+    useConnection.getState().requestConnect(spec);
+    const first = useConnection.getState().confirmConnect();
+    useConnection.getState().requestConnect(spec2);
+    const second = useConnection.getState().confirmConnect();
+
+    pending[0]!({ connectionId: "c1", server });
+    await first;
+    pending[1]!({ connectionId: "c2", server });
+    await second;
+
+    expect(useConnection.getState()).toMatchObject({ status: "connected", connectionId: "c2" });
+    expect(disconnected).toEqual(["c1"]);
   });
 
   it("ordinary tool errors keep the connection", async () => {

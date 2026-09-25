@@ -1,11 +1,12 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ConnectPanel } from "./components/ConnectPanel";
 import { ConsentDialog } from "./components/ConsentDialog";
 import { EmptyState } from "./components/EmptyState";
 import { ErrorBanner } from "./components/ErrorBanner";
 import { ToolDetail } from "./components/ToolDetail";
 import { ToolList } from "./components/ToolList";
-import { useConnection } from "./state/connection";
+import { onConnectionClosed } from "./lib/events";
+import { offersTools, useConnection } from "./state/connection";
 import "./styles/app.css";
 
 export default function App() {
@@ -16,6 +17,19 @@ export default function App() {
   const error = useConnection((s) => s.error);
   const disconnect = useConnection((s) => s.disconnect);
   const [selected, setSelected] = useState<string | null>(null);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+    void onConnectionClosed((event) => useConnection.getState().handleConnectionClosed(event)).then((stop) => {
+      if (disposed) stop();
+      else unlisten = stop;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
 
   const connected = status === "connected" && server !== null;
   const tool = connected ? (tools.find((t) => t.name === selected) ?? null) : null;
@@ -51,6 +65,8 @@ export default function App() {
         {error && <ErrorBanner error={error} />}
         {tool ? (
           <ToolDetail key={tool.name} tool={tool} />
+        ) : connected && !offersTools(server) ? (
+          <p className="sf-help">This server doesn't offer any tools. Resources and prompts arrive in a later release.</p>
         ) : connected ? (
           <p className="sf-help">Select a tool to inspect and run it.</p>
         ) : (
