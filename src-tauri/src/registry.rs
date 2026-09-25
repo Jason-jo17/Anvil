@@ -50,16 +50,44 @@ impl From<StdioConnection> for Connection {
     }
 }
 
+type Connections = Arc<Mutex<HashMap<String, Arc<Connection>>>>;
+
 /// Open connections by id. The lock is never held across an await, so a slow tool call never blocks disconnect.
 #[derive(Default)]
 pub struct Registry {
-    connections: Mutex<HashMap<String, Arc<Connection>>>,
+    connections: Connections,
+}
+
+fn lock(connections: &Connections) -> MutexGuard<'_, HashMap<String, Arc<Connection>>> {
+    connections.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 impl Registry {
     pub fn insert(&self, connection: Connection) -> String {
         let id = uuid::Uuid::new_v4().to_string();
         self.lock().insert(id.clone(), Arc::new(connection));
+        id
+    }
+
+    /// Like `insert`, and also watches the session: if the server exits on its own (not via `disconnect`), the entry
+    /// is removed and `on_unexpected_exit(id, stderr_tail)` runs once, so the UI can say so right away.
+    pub fn insert_watched(
+        &self,
+        connection: Connection,
+        on_unexpected_exit: impl FnOnce(String, Vec<String>) + Send + 'static,
+    ) -> String {
+        let id = self.insert(connection);
+        let connection = self.lock().get(&id).cloned().expect("just inserted");
+        let connections = Arc::clone(&self.connections);
+        let watched_id = id.clone();
+        tauri::async_runtime::spawn(async move {
+            connection.session.closed().await;
+            // Still registered means nobody called disconnect: the server went away by itself.
+            if lock(&connections).remove(&watched_id).is_some() {
+                let stderr_tail = connection.process.as_ref().map(|p| p.stderr.lines()).unwrap_or_default();
+                on_unexpected_exit(watched_id, stderr_tail);
+            }
+        });
         id
     }
 
@@ -113,7 +141,7 @@ impl Registry {
     }
 
     fn lock(&self) -> MutexGuard<'_, HashMap<String, Arc<Connection>>> {
-        self.connections.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        lock(&self.connections)
     }
 }
 
@@ -187,6 +215,40 @@ mod tests {
         assert_eq!(error.kind, "disconnected");
         assert_eq!(error.stderr_tail, ["fatal: lost database connection"]);
         assert_eq!(registry.open_count(), 0, "a dead connection must not stay registered");
+    }
+
+    #[tokio::test]
+    async fn an_unexpected_exit_is_reported_once_with_stderr_and_removed() {
+        let (io, server) = spawn_fixture();
+        let session = McpSession::connect_with(io, SessionOptions::default()).await.expect("connect");
+        let stderr = anvil_core::stdio::StderrTail::default();
+        stderr.push("panic: out of memory".into());
+        let registry = Registry::default();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let id = registry.insert_watched(Connection { session, process: Some(ProcessInfo { pid: None, stderr }) }, {
+            move |closed_id, tail| {
+                let _ = tx.send((closed_id, tail));
+            }
+        });
+
+        server.abort();
+        let (closed_id, tail) =
+            tokio::time::timeout(std::time::Duration::from_secs(3), rx).await.expect("no exit report").unwrap();
+        assert_eq!(closed_id, id);
+        assert_eq!(tail, ["panic: out of memory"]);
+        assert_eq!(registry.open_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_user_disconnect_is_not_reported_as_an_unexpected_exit() {
+        let registry = Registry::default();
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        let id = registry.insert_watched(fixture_connection().await, move |_, _| {
+            let _ = tx.send(());
+        });
+        registry.disconnect(&id).await.unwrap();
+        let reported = tokio::time::timeout(std::time::Duration::from_millis(500), rx).await;
+        assert!(!matches!(reported, Ok(Ok(()))), "user disconnect was reported as a crash");
     }
 
     #[test]
