@@ -209,6 +209,19 @@ describe("SchemaForm", () => {
     expect(screen.getByText("Required")).toBeInTheDocument();
   });
 
+  it("renders a draft-07 tuple as a JSON field and keeps the rest of the form", async () => {
+    const { onSubmit, user } = setup({
+      type: "object",
+      properties: { label: { type: "string" }, point: { type: "array", items: [{ type: "number" }, { type: "number" }] } },
+    });
+    expect(screen.queryByText(/could not be compiled/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/^label/)).toHaveAttribute("type", "text");
+    await user.click(screen.getByLabelText(/^point/));
+    await user.paste("[1, 2]");
+    await user.click(screen.getByRole("button", { name: "Run" }));
+    expect(onSubmit).toHaveBeenCalledWith({ point: [1, 2] });
+  });
+
   it("falls back to raw JSON with a warning when the schema cannot be compiled", () => {
     setup({ type: "object", properties: { a: { type: 12 as unknown as string } } });
     expect(screen.getByText(/could not be compiled/)).toBeInTheDocument();

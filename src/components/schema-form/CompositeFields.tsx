@@ -73,7 +73,8 @@ export function ArrayField(props: FieldProps) {
   const error = useFieldError(path, false);
   const items = Array.isArray(value) ? value : [];
 
-  if (s.prefixItems !== undefined || s.items === undefined || typeof s.items === "boolean") {
+  // Tuples (2020-12 prefixItems or older-draft `items: [..]`) have no list widget.
+  if (s.prefixItems !== undefined || s.items === undefined || typeof s.items === "boolean" || Array.isArray(s.items)) {
     return <RawJsonField {...props} note="This list's schema has no form widget, so edit it as JSON." />;
   }
   const itemSchema = s.items;

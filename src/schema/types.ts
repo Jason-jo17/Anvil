@@ -12,7 +12,9 @@ export interface SchemaObject {
   properties?: Record<string, Schema>;
   required?: string[];
   additionalProperties?: Schema;
-  items?: Schema;
+  /** `Schema[]` is the pre-2020-12 tuple form; see `normalizeLegacyKeywords`. */
+  items?: Schema | Schema[];
+  additionalItems?: Schema;
   prefixItems?: Schema[];
   anyOf?: Schema[];
   oneOf?: Schema[];

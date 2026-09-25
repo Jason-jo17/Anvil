@@ -43,6 +43,34 @@ describe("compileValidator", () => {
     expect(validate(draft7, {})).toEqual({ "/q": ["Required"] });
   });
 
+  it("keeps validating draft-07 tuple items (zod z.tuple output)", () => {
+    const tuple: SchemaObject = {
+      type: "object",
+      properties: { point: { type: "array", items: [{ type: "number" }, { type: "number" }], additionalItems: false } },
+    };
+    expect(validate(tuple, { point: [1, 2] })).toEqual({});
+    expect(Object.keys(validate(tuple, { point: [1, "x"] }))).toEqual(["/point/1"]);
+    expect(Object.keys(validate(tuple, { point: [1, 2, 3] }))).toEqual(["/point"]);
+  });
+
+  it("keeps validating draft-04 boolean exclusiveMinimum/exclusiveMaximum", () => {
+    const ranged: SchemaObject = {
+      type: "object",
+      properties: { n: { type: "number", minimum: 0, exclusiveMinimum: true, maximum: 10, exclusiveMaximum: false } },
+    };
+    expect(validate(ranged, { n: 5 })).toEqual({});
+    expect(Object.keys(validate(ranged, { n: 0 }))).toEqual(["/n"]);
+    expect(validate(ranged, { n: 10 })).toEqual({});
+  });
+
+  it("does not rewrite data values that happen to look like keywords", () => {
+    const withData: SchemaObject = {
+      type: "object",
+      properties: { mode: { const: { items: [1, 2] } } },
+    };
+    expect(validate(withData, { mode: { items: [1, 2] } })).toEqual({});
+  });
+
   it("reports schemas it cannot compile instead of throwing", () => {
     const v = compileValidator({ type: "object", properties: { a: { type: 12 as unknown as string } } });
     expect(v.ok).toBe(false);
